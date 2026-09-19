@@ -1,0 +1,237 @@
+# ==========================================
+# DLSAU Alumni Tracking System
+# main.py
+# ==========================================
+import os
+#import tkinter as tk
+
+import tkinter as tk
+import tkinter.font as tkfont
+
+from config import SYSTEM_NAME, BASE_DIR
+from database import initialize_database
+
+import theme
+from widgets.splash import SplashScreen
+
+# Import Frames
+from frames.welcome import WelcomePage
+from frames.admin_login import AdminLoginPage
+from frames.alumni_login import AlumniLoginPage
+from frames.register import RegisterPage
+
+from frames.admin.dashboard import AdminDashboardPage
+from frames.admin.manage_alumni import ManageAlumniPage
+
+from frames.alumni.dashboard import AlumniDashboardPage
+from frames.alumni.profile import AlumniProfilePage
+
+from frames.admin.alumni_details import AlumniDetailsPage
+
+from frames.alumni.employment import EmploymentPage
+
+from frames.about import AboutPage
+
+LOGO_PATH = os.path.join(BASE_DIR, "assets", "developers", "dlsau_logo.png")
+
+
+class AlumniTrackerApp(tk.Tk):
+
+    def __init__(self):
+
+        super().__init__()
+
+        # Hide the main window until the splash screen has finished
+        # and everything is built — this is the "first run" loading
+        # screen requested for the system.
+        self.withdraw()
+
+        # -----------------------------
+        # Fonts: PT Serif for titles, Helvetica for body text
+        # -----------------------------
+        theme.init_fonts(self)
+
+        default_font = tkfont.nametofont("TkDefaultFont")
+        default_font.configure(family=theme.BODY_FONT_NAME, size=11)
+
+        text_font = tkfont.nametofont("TkTextFont")
+        text_font.configure(family=theme.BODY_FONT_NAME, size=11)
+
+        menu_font = tkfont.nametofont("TkMenuFont")
+        menu_font.configure(family=theme.BODY_FONT_NAME, size=11)
+
+        # Window setup (kept large per presentation requirements)
+        self.title(SYSTEM_NAME)
+        self.geometry("1280x800")
+        self.minsize(1024, 700)
+        self.resizable(True, True)
+        self.configure(bg=theme.BG_COLOR)
+
+        if os.path.exists(LOGO_PATH):
+            try:
+                self._icon_img = tk.PhotoImage(file=LOGO_PATH)
+                self.iconphoto(True, self._icon_img)
+            except tk.TclError:
+                pass
+
+        # Create Database
+        initialize_database()
+
+        # Container
+        container = tk.Frame(self, bg=theme.BG_COLOR)
+        container.pack(fill="both", expand=True)
+
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+
+        self.frames = {}
+
+        # Register every page here
+        pages = (
+            WelcomePage,
+            AdminLoginPage,
+            AlumniLoginPage,
+            RegisterPage,
+            AdminDashboardPage,
+            ManageAlumniPage,
+            AlumniDetailsPage,
+            AlumniDashboardPage,
+            AlumniProfilePage,
+            EmploymentPage,
+            AboutPage,
+        )
+
+        for Page in pages:
+
+            page_name = Page.__name__
+
+            frame = Page(
+                parent=container,
+                controller=self
+            )
+
+            self.frames[page_name] = frame
+
+            # Frames are positioned on demand inside show_frame() so
+            # that switching pages can be animated with a slide
+            # transition instead of an instant cut.
+            frame.place(x=0, y=0, relwidth=1, relheight=1)
+            frame.lower()
+
+        self._current_frame = None
+        self._transition_running = False
+
+        self.show_frame("WelcomePage")
+
+        # Show the branded loading screen, then reveal the app.
+        SplashScreen(self, LOGO_PATH, on_done=self._reveal)
+
+    def _reveal(self):
+        self.deiconify()
+        self.attributes("-fullscreen", True)
+        self.lift()
+        self.focus_force()
+
+    # -----------------------------
+    # Switch Pages
+    # -----------------------------
+
+    def show_frame(self, page_name):
+
+        frame = self.frames[page_name]
+
+        # Refresh dashboard statistics
+        if hasattr(frame, "refresh_statistics"):
+            frame.refresh_statistics()
+
+        # Refresh alumni table
+        if hasattr(frame, "load_users"):
+            frame.load_users()
+
+        # Refresh alumni profile
+        if hasattr(frame, "load_profile"):
+            frame.load_profile()
+
+        if hasattr(frame, "load_data"):
+            frame.load_data()
+
+        if hasattr(frame, "refresh_profile"):
+            frame.refresh_profile()
+
+        old_frame = self._current_frame
+
+        if old_frame is None or old_frame is frame or self._transition_running:
+            # First page shown, re-showing the same page, or a
+            # transition is already mid-flight: just snap into place.
+            frame.place(x=0, y=0, relwidth=1, relheight=1)
+            frame.lift()
+            frame.focus_set()
+            self._current_frame = frame
+            return
+
+        self._transition_running = True
+        self._animate_transition(old_frame, frame)
+
+    # -----------------------------
+    # Page transition animation
+    # -----------------------------
+    # Tkinter frames don't support per-widget transparency, so a clean
+    # cross-fade between two frames isn't possible directly. Instead we
+    # fade the whole window out, swap the page underneath while it's
+    # invisible, then fade back in — this reads as a smooth fade
+    # transition between pages.
+    # -----------------------------
+
+    def _animate_transition(self, old_frame, new_frame):
+        self._fade_step(old_frame, new_frame, alpha=1.0, direction="out")
+
+    def _fade_step(self, old_frame, new_frame, alpha, direction, step_size=0.12, interval_ms=15):
+
+        try:
+            if direction == "out":
+                alpha = max(alpha - step_size, 0.0)
+            else:
+                alpha = min(alpha + step_size, 1.0)
+
+            self.attributes("-alpha", alpha)
+        except tk.TclError:
+            pass
+
+        if direction == "out" and alpha > 0.0:
+            self.after(
+                interval_ms,
+                lambda: self._fade_step(old_frame, new_frame, alpha, "out", step_size, interval_ms),
+            )
+            return
+
+        if direction == "out" and alpha <= 0.0:
+            # Fully faded out: swap the visible page now, while invisible.
+            old_frame.place_forget()
+            old_frame.lower()
+            new_frame.place(x=0, y=0, relwidth=1, relheight=1)
+            new_frame.lift()
+            new_frame.focus_set()
+            self._current_frame = new_frame
+
+            self.after(
+                interval_ms,
+                lambda: self._fade_step(old_frame, new_frame, 0.0, "in", step_size, interval_ms),
+            )
+            return
+
+        if direction == "in" and alpha < 1.0:
+            self.after(
+                interval_ms,
+                lambda: self._fade_step(old_frame, new_frame, alpha, "in", step_size, interval_ms),
+            )
+            return
+
+        # Fully faded back in.
+        self._transition_running = False
+
+
+if __name__ == "__main__":
+
+    app = AlumniTrackerApp()
+
+    app.mainloop()
